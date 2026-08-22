@@ -1,0 +1,6 @@
+Flask
+gspread
+oauth2client
+line-bot-sdk
+python-dotenv
+gunicorn
