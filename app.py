@@ -620,31 +620,78 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"【{item}】の金額（半角数字）を送信してください。"))
         return
 
-    # ③ 金額入力
+# ③ 金額入力（四則演算・全角記号対応版）
     if step == "WAIT_AMOUNT":
         category = session.get("category", "")
-        val_str = user_text.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
-        if not val_str.isdigit() or int(val_str) == 0:
+        
+        # 全角数字・「＋ － ＊ ／ × ÷」などの記号をすべて半角・プログラム用に変換
+        trans_table = str.maketrans({
+            '０':'0', '１':'1', '２':'2', '３':'3', '４':'4',
+            '５':'5', '６':'6', '７':'7', '８':'8', '９':'9',
+            '＋':'+', '－':'-', '＊':'*', '／':'/', '×':'*', '÷':'/'
+        })
+        raw_text = user_text.translate(trans_table)
+        
+        # 式または数字のみか判定（数字, +, -, *, /, カッコ, スペースを許可）
+        import re
+        if re.match(r'^[0-9+\-*/()\s]+$', raw_text):
+            try:
+                # 安全な計算処理
+                calc_val = eval(raw_text, {"__builtins__": None}, {})
+                val_num = int(calc_val)
+                
+                if val_num <= 0:
+                    line_bot_api.reply_message(
+                        event.reply_token,
+                        TextSendMessage(text="計算結果が0以下になりました。正の金額を入力してください。")
+                    )
+                    return
+                
+                val_str = str(val_num)
+                
+            except Exception:
+                line_bot_api.reply_message(
+                    event.reply_token,
+                    TextSendMessage(text="計算式にエラーがあります。例: 500+200 や 100x3 のように入力してください。")
+                )
+                return
+        else:
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="金額は正の半角数字（例: 1200）で入力してください。")
+                TextSendMessage(text="金額または計算式（例: 500+200 / 100×3）を送信してください。")
             )
             return
 
         session["amount"] = val_str
+        
+        # 計算式（記号）が含まれていた場合、計算結果の案内メッセージを用意
+        has_operator = any(op in raw_text for op in ['+', '-', '*', '/'])
+        calc_note = f"（計算結果: {val_str}円）\n" if has_operator else ""
+
         if category == "収入（その他）":
             session["step"] = "WAIT_MEMO_TEXT"
             user_sessions[line_user_id] = session
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="収入の内容（メモ）をテキストで入力してください。")
+                TextSendMessage(text=f"{calc_note}収入の内容（メモ）をテキストで入力してください。")
             )
             return
 
         session["step"] = "WAIT_MEMO_OPTION"
         user_sessions[line_user_id] = session
-        flex_msg = FlexSendMessage(alt_text="メモ選択", contents=get_memo_option_flex())
-        line_bot_api.reply_message(event.reply_token, flex_msg)
+        
+        # 計算式が使われた場合は通知メッセージを添えてメモ選択を表示
+        if has_operator:
+            line_bot_api.reply_message(
+                event.reply_token,
+                [
+                    TextSendMessage(text=f"💡 計算結果: {val_str}円 で受け付けました！"),
+                    FlexSendMessage(alt_text="メモ選択", contents=get_memo_option_flex())
+                ]
+            )
+        else:
+            flex_msg = FlexSendMessage(alt_text="メモ選択", contents=get_memo_option_flex())
+            line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
     # ④ メモ選択
