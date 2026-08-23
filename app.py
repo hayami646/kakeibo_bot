@@ -204,7 +204,7 @@ def callback():
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-    user_text = event.message.text.strip()
+user_text = event.message.text.strip()
     line_user_id = event.source.user_id
 
     # ユーザー判定
@@ -227,6 +227,14 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
+    # ★★★ ここに移動！(スプレッドシート読み込みの前に処理する) ★★★
+    if user_text in ["操作:入力開始", "入力"]:
+        user_sessions[line_user_id] = {"step": "WAIT_CATEGORY"}
+        flex_msg = FlexSendMessage(alt_text="分類選択", contents=get_category_flex())
+        line_bot_api.reply_message(event.reply_token, flex_msg)
+        return
+
+    # --- ここから下でスプレッドシートの読み込みを開始 ---
     sheet_name, day_str = get_target_sheet_name()
     client = get_gspread_client()
     workbook = client.open_by_key(SPREADSHEET_KEY)
@@ -272,15 +280,9 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         return
 
-    # --- 対話型入力フロー ---
+    # --- 対話型入力フロー（残り） ---
 
     session = user_sessions.get(line_user_id, {})
-
-    if user_text in ["操作:入力開始", "入力"]:
-        user_sessions[line_user_id] = {"step": "WAIT_CATEGORY"}
-        flex_msg = FlexSendMessage(alt_text="分類選択", contents=get_category_flex())
-        line_bot_api.reply_message(event.reply_token, flex_msg)
-        return
 
     if user_text.startswith("分類:") and session.get("step") == "WAIT_CATEGORY":
         category = user_text.replace("分類:", "")
