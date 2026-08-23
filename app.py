@@ -27,7 +27,7 @@ USER_MAP = {
     "U33dfd50f79bf0c4c44824ba2ab0622a8": "真季",
 }
 
-# 残高確認の対象項目と対応セルのマッピング（一括表示用）
+# 残高確認の対象項目と対応セルのマッピング
 BALANCE_CELL_LIST = [
     ("食費", "I41"),
     ("外食", "K41"),
@@ -38,7 +38,6 @@ BALANCE_CELL_LIST = [
 ]
 
 user_sessions = {}
-# 直前に書き込みを行ったシート名を記録するグローバル変数
 last_written_sheet = None
 
 def get_gspread_client():
@@ -55,11 +54,6 @@ def get_gspread_client():
     return gspread.authorize(creds)
 
 def get_target_sheet_name(specified_month=None, specified_day=None):
-    """
-    シート名と日付文字列を取得。
-    指定の月があればその月シートを使用。
-    月が未指定の場合は25日締めロジックで自動判定。
-    """
     JST = timezone(timedelta(hours=+9))
     now = datetime.now(JST)
     
@@ -78,7 +72,6 @@ def get_target_sheet_name(specified_month=None, specified_day=None):
     return target_sheet, day_str
 
 def append_to_spreadsheet(month_str, day_str, amount, category, person, memo):
-    """スプレッドシートへの書き込み共通処理"""
     global last_written_sheet
     sheet_name, _ = get_target_sheet_name(month_str, day_str)
     client = get_gspread_client()
@@ -87,7 +80,6 @@ def append_to_spreadsheet(month_str, day_str, amount, category, person, memo):
     row_data = [day_str, int(amount), category, person, memo]
     sheet.append_row(row_data)
     
-    # 削除時に直前の入力シートを正しく参照できるよう記録
     last_written_sheet = sheet_name
     return sheet_name
 
@@ -123,7 +115,7 @@ def get_main_menu_flex():
                         {
                             "type": "button",
                             "style": "secondary",
-                            "action": {"type": "message", "label": "🗑️ １つ前を削除", "text": "削除"}
+                            "action": {"type": "message", "label": "🗑️ 自分の最後の入力を削除", "text": "削除確認"}
                         },
                         {
                             "type": "button",
@@ -136,8 +128,113 @@ def get_main_menu_flex():
         }
     }
 
+def get_category_flex():
+    """分類選択（固定費・収入を控えめなデザインに変更）"""
+    main_categories = ["食費", "外食", "共用", "快海おこづかい", "真季おこづかい", "臨時"]
+    
+    main_buttons = [
+        {
+            "type": "button",
+            "style": "primary",
+            "color": "#4A90E2",
+            "margin": "xs",
+            "height": "sm",
+            "action": {"type": "message", "label": cat, "text": f"分類:{cat}"}
+        } for cat in main_categories
+    ]
+    
+    # 控えめな配置（横並びで小さめのグレーボタン）
+    sub_buttons = {
+        "type": "box",
+        "layout": "horizontal",
+        "spacing": "xs",
+        "margin": "md",
+        "contents": [
+            {
+                "type": "button",
+                "style": "secondary",
+                "height": "sm",
+                "action": {"type": "message", "label": "固定費", "text": "分類:固定費"}
+            },
+            {
+                "type": "button",
+                "style": "secondary",
+                "height": "sm",
+                "action": {"type": "message", "label": "収入", "text": "分類:収入"}
+            }
+        ]
+    }
+    
+    cancel_btn = {
+        "type": "button",
+        "style": "secondary",
+        "margin": "sm",
+        "height": "sm",
+        "action": {"type": "message", "label": "キャンセル", "text": "キャンセル"}
+    }
+
+    contents = main_buttons + [sub_buttons, cancel_btn]
+
+    return {
+        "type": "bubble",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": "分類を選択してください", "weight": "bold", "size": "lg", "align": "center"},
+                {"type": "separator", "margin": "md"},
+                {"type": "box", "layout": "vertical", "margin": "md", "spacing": "xs", "contents": contents}
+            ]
+        }
+    }
+
+def get_delete_confirm_flex(sheet_name, row_num, day_str, amount, category, memo):
+    """削除前の確認画面 Flex Message"""
+    return {
+        "type": "bubble",
+        "body": {
+            "type": "box",
+            "layout": "vertical",
+            "contents": [
+                {"type": "text", "text": "⚠️ 以下のデータを削除しますか？", "weight": "bold", "size": "md", "color": "#D32F2F", "align": "center"},
+                {"type": "separator", "margin": "md"},
+                {
+                    "type": "box",
+                    "layout": "vertical",
+                    "margin": "md",
+                    "spacing": "xs",
+                    "contents": [
+                        {"type": "text", "text": f"対象シート: {sheet_name}", "size": "sm", "color": "#666666"},
+                        {"type": "text", "text": f"日付: {day_str}日", "size": "sm"},
+                        {"type": "text", "text": f"金額: {amount}円", "weight": "bold", "size": "md"},
+                        {"type": "text", "text": f"分類: {category}", "size": "sm"},
+                        {"type": "text", "text": f"メモ: {memo}", "size": "sm", "color": "#666666"}
+                    ]
+                },
+                {
+                    "type": "box",
+                    "layout": "horizontal",
+                    "spacing": "md",
+                    "margin": "lg",
+                    "contents": [
+                        {
+                            "type": "button",
+                            "style": "primary",
+                            "color": "#D32F2F",
+                            "action": {"type": "message", "label": "はい（削除）", "text": f"実行削除:{sheet_name}:{row_num}"}
+                        },
+                        {
+                            "type": "button",
+                            "style": "secondary",
+                            "action": {"type": "message", "label": "いいえ", "text": "キャンセル"}
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
 def get_month_select_flex(prefix="指定月", title="対象の月を選択してください"):
-    """月選択 Flex Message (1月〜12月)"""
     rows = []
     for r in range(4):
         cols = []
@@ -174,7 +271,6 @@ def get_month_select_flex(prefix="指定月", title="対象の月を選択して
     }
 
 def get_day_input_flex(selected_month, current_day_str="1"):
-    """日付入力用テンキーFlex Message"""
     def make_btn(label, action_text, style="secondary", color=None):
         btn = {
             "type": "button",
@@ -286,30 +382,6 @@ def get_day_input_flex(selected_month, current_day_str="1"):
         }
     }
 
-def get_category_flex():
-    categories = ["食費", "外食", "共用", "固定費", "収入", "快海おこづかい", "真季おこづかい", "臨時", "キャンセル"]
-    buttons = [
-        {
-            "type": "button",
-            "style": "secondary",
-            "margin": "xs",
-            "height": "sm",
-            "action": {"type": "message", "label": cat, "text": f"分類:{cat}" if cat != "キャンセル" else "キャンセル"}
-        } for cat in categories
-    ]
-    return {
-        "type": "bubble",
-        "body": {
-            "type": "box",
-            "layout": "vertical",
-            "contents": [
-                {"type": "text", "text": "分類を選択してください", "weight": "bold", "size": "lg", "align": "center"},
-                {"type": "separator", "margin": "md"},
-                {"type": "box", "layout": "vertical", "margin": "md", "spacing": "xs", "contents": buttons}
-            ]
-        }
-    }
-
 def get_fixed_cost_flex():
     items = ["電気代", "ガス代", "水道代", "スマホ", "ウォーターサーバー", "家賃", "保険", "キャンセル"]
     buttons = [
@@ -406,45 +478,40 @@ def handle_message(event):
     user_text = event.message.text.strip()
     line_user_id = event.source.user_id
 
-    # ユーザー判定
     person = USER_MAP.get(line_user_id, None)
     if not person:
         reply_text = f"ユーザーID未登録です。\napp.pyのUSER_MAPに以下を登録してください：\n\n\"{line_user_id}\": \"お名前\""
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         return
 
-    # キャンセル処理
     if user_text in ["キャンセル", "中止"]:
         user_sessions.pop(line_user_id, None)
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="入力操作をキャンセルしました。"))
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="操作をキャンセルしました。"))
         return
 
-    # メインメニュー表示
     if user_text in ["メニュー", "記録", "家計簿", "スタート"]:
         user_sessions.pop(line_user_id, None)
         flex_msg = FlexSendMessage(alt_text="家計簿メニュー", contents=get_main_menu_flex())
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    # ① 通常の入力開始（当日）
+    # ① 入力開始
     if user_text in ["操作:入力開始", "入力"]:
         user_sessions[line_user_id] = {"step": "WAIT_CATEGORY", "month": None, "day": None}
         flex_msg = FlexSendMessage(alt_text="分類選択", contents=get_category_flex())
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    # ①-2 日付指定入力の開始 (まず月を選択)
+    # ①-2 日付指定入力
     if user_text in ["入力（日付指定）", "日付指定入力"]:
         user_sessions[line_user_id] = {"step": "WAIT_MONTH_SELECT"}
         flex_msg = FlexSendMessage(alt_text="月選択", contents=get_month_select_flex("指定月", "対象の月を選択してください"))
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    # 既存セッションの取得
     session = user_sessions.get(line_user_id, {})
     step = session.get("step")
 
-    # 月選択の受付 (日付指定入力用)
     if step == "WAIT_MONTH_SELECT" and user_text.startswith("指定月:"):
         selected_month = user_text.replace("指定月:", "")
         JST = timezone(timedelta(hours=+9))
@@ -459,7 +526,6 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    # 日付指定電卓の受付
     if step == "WAIT_DAY_INPUT" and user_text.startswith("日付電卓:"):
         cmd = user_text.replace("日付電卓:", "")
         curr_day = session.get("day_str", "1")
@@ -498,7 +564,7 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    # ② 分類選択の受付
+    # ② 分類選択
     if step == "WAIT_CATEGORY" and user_text.startswith("分類:"):
         category = user_text.replace("分類:", "")
         
@@ -523,7 +589,6 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"【{display_label}】の金額（半角数字）を送信してください。"))
         return
 
-    # ②-2 固定費項目選択の受付
     if step == "WAIT_FIXED_COST_ITEM" and user_text.startswith("固定費項目:"):
         item = user_text.replace("固定費項目:", "")
         session["category"] = item
@@ -536,11 +601,10 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    # ②-2-2 固定費の対象月選択の受付
     if step == "WAIT_FIXED_COST_MONTH" and user_text.startswith("固定費月:"):
         selected_month = user_text.replace("固定費月:", "")
         session["month"] = selected_month
-        session["day"] = "1"  # 固定費はデフォルトで1日に記録
+        session["day"] = "1"
         session["step"] = "WAIT_AMOUNT"
         user_sessions[line_user_id] = session
         
@@ -548,7 +612,6 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"【{selected_month}月分 {category}】の金額（半角数字）を送信してください。"))
         return
 
-    # ②-3 収入項目選択の受付
     if step == "WAIT_INCOME_ITEM" and user_text.startswith("収入項目:"):
         item = user_text.replace("収入項目:", "")
         session["step"] = "WAIT_AMOUNT"
@@ -557,10 +620,9 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"【{item}】の金額（半角数字）を送信してください。"))
         return
 
-    # ③ 金額入力（直接テキスト送信）の受付
+    # ③ 金額入力
     if step == "WAIT_AMOUNT":
         category = session.get("category", "")
-        # 全角数字を半角に変換するなどの処理
         val_str = user_text.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
         if not val_str.isdigit() or int(val_str) == 0:
             line_bot_api.reply_message(
@@ -575,7 +637,7 @@ def handle_message(event):
             user_sessions[line_user_id] = session
             line_bot_api.reply_message(
                 event.reply_token,
-                TextSendMessage(text="収入の内容（メモ）をテキストで入力してください。\n（例：宝くじ、メルカリ売上）")
+                TextSendMessage(text="収入の内容（メモ）をテキストで入力してください。")
             )
             return
 
@@ -585,7 +647,7 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    # ④ メモ「あり」「なし」の選択受付
+    # ④ メモ選択
     if step == "WAIT_MEMO_OPTION":
         if user_text == "メモ:あり":
             session["step"] = "WAIT_MEMO_TEXT"
@@ -612,7 +674,7 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
             return
 
-    # ⑤ メモテキストの受付＆確定処理
+    # ⑤ メモ確定
     if step == "WAIT_MEMO_TEXT":
         memo = user_text
         category = session.get("category")
@@ -630,59 +692,75 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         return
 
-    # --- その他の固定コマンド（取り消し・残高など） ---
+    # --- 削除処理（改善版：ユーザー判定 ＋ 削除前確認） ---
 
-    # 直前の入力削除処理
-    if user_text in ["取り消し", "削除", "とりけし"]:
+    # 削除ボタン押下時（削除対象を探索して確認画面を提示）
+    if user_text in ["削除確認", "削除", "とりけし"]:
         user_sessions.pop(line_user_id, None)
         try:
-            # 直前に書き込んだシートがあれば優先、無ければ現在の締め日ロジックに基づく月シートを参照
             target_sheet = last_written_sheet if last_written_sheet else get_target_sheet_name()[0]
-            
             client = get_gspread_client()
             workbook = client.open_by_key(SPREADSHEET_KEY)
             sheet = workbook.worksheet(target_sheet)
             all_rows = sheet.get_all_values()
             
-            if len(all_rows) >= 4:
-                # 削除対象の最終行データを取得
-                deleted_row = all_rows[-1]
-                del_day = deleted_row[0] if len(deleted_row) > 0 else "-"
-                del_amount = deleted_row[1] if len(deleted_row) > 1 else "-"
-                del_category = deleted_row[2] if len(deleted_row) > 2 else "-"
-                del_person = deleted_row[3] if len(deleted_row) > 3 else "-"
-                del_memo = deleted_row[4] if len(deleted_row) > 4 else "-"
+            target_row_idx = None
+            target_row_data = None
+            
+            # 下の行から順に探して、担当者（D列: インデックス3）が自分（person）のものを検出
+            for idx in range(len(all_rows) - 1, 3, -1):
+                row = all_rows[idx]
+                if len(row) > 3 and row[3] == person:
+                    target_row_idx = idx + 1  # 1-indexedの行番号
+                    target_row_data = row
+                    break
+
+            if target_row_data:
+                day_str = target_row_data[0] if len(target_row_data) > 0 else "-"
+                amount = target_row_data[1] if len(target_row_data) > 1 else "-"
+                category = target_row_data[2] if len(target_row_data) > 2 else "-"
+                memo = target_row_data[4] if len(target_row_data) > 4 else "-"
                 
-                # 最終行を削除
-                sheet.delete_rows(len(all_rows))
-                
-                reply_text = (
-                    f"🗑️ 【{target_sheet}】直前の入力データを削除しました！\n"
-                    f"--------------------\n"
-                    f"・日付: {del_day}日\n"
-                    f"・金額: {del_amount}円\n"
-                    f"・分類: {del_category}\n"
-                    f"・担当: {del_person}\n"
-                    f"・メモ: {del_memo}"
+                flex_msg = FlexSendMessage(
+                    alt_text="削除確認",
+                    contents=get_delete_confirm_flex(target_sheet, target_row_idx, day_str, amount, category, memo)
                 )
+                line_bot_api.reply_message(event.reply_token, flex_msg)
             else:
-                reply_text = f"⚠️ ({target_sheet}) 削除できるデータがありません。"
+                line_bot_api.reply_message(
+                    event.reply_token, 
+                    TextSendMessage(text=f"⚠️ 【{target_sheet}】に{person}さんが入力した削除対象のデータが見つかりませんでした。")
+                )
         except Exception as e:
-            reply_text = f"⚠️ 削除処理でエラーが発生しました:\n{e}"
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"⚠️ エラーが発生しました:\n{e}"))
         return
 
-    # 残高確認（ボタン1回で現在の対象月シートの全項目を即時表示）
+    # 削除の「はい」を押したときの実行処理
+    if user_text.startswith("実行削除:"):
+        try:
+            _, sheet_name, row_num_str = user_text.split(":")
+            row_num = int(row_num_str)
+            
+            client = get_gspread_client()
+            workbook = client.open_by_key(SPREADSHEET_KEY)
+            sheet = workbook.worksheet(sheet_name)
+            
+            sheet.delete_rows(row_num)
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"🗑️ 【{sheet_name}】の指定データを削除しました！"))
+        except Exception as e:
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"⚠️ 削除に失敗しました:\n{e}"))
+        return
+
+    # 残高確認
     if user_text in ["残高メニュー", "残高確認", "残高"]:
         user_sessions.pop(line_user_id, None)
-        sheet_name, _ = get_target_sheet_name()  # 25日締めロジックに基づき当月のシート名を取得
+        sheet_name, _ = get_target_sheet_name()
         
         try:
             client = get_gspread_client()
             workbook = client.open_by_key(SPREADSHEET_KEY)
             sheet = workbook.worksheet(sheet_name)
             
-            # 各セルの値を順番に取得
             results = []
             for item_name, cell_addr in BALANCE_CELL_LIST:
                 val = sheet.acell(cell_addr).value
@@ -697,7 +775,6 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         return
 
-    # バックアップ用処理
     user_sessions.pop(line_user_id, None)
     flex_msg = FlexSendMessage(alt_text="家計簿メニュー", contents=get_main_menu_flex())
     line_bot_api.reply_message(event.reply_token, flex_msg)
