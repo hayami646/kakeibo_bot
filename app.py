@@ -24,7 +24,7 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 # ユーザーIDと表示名のマッピング
 USER_MAP = {
     "U7ec4e3142dbdca5e58341bac3264e8d4": "快海",
-    "U33dfd50f70bf0c4c44824ba2ab0622a8": "真季",
+    "U33dfd50f79bf0c4c44824ba2ab0622a8": "Maki",
 }
 
 # 残高確認の対象項目と対応セルのマッピング
@@ -272,7 +272,7 @@ def handle_message(event):
         )
         return
 
-    # --- ここからスプレッドシートの接続・データ書き込み処理 ---
+    # --- ここからスプレッドシートの接続処理 ---
     sheet_name, day_str = get_target_sheet_name()
     client = get_gspread_client()
     workbook = client.open_by_key(SPREADSHEET_KEY)
@@ -299,7 +299,7 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         return
 
-    # ⑥ メモテキスト入力の確定＆スプレッドシート書き込み
+    # ⑥ メモテキスト入力の確定＆スプレッドシート書き込み（ここでテキストを受け取って保存）
     if session.get("step") == "WAIT_MEMO_TEXT":
         memo = user_text
         category = session.get("category")
