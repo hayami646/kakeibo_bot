@@ -207,7 +207,7 @@ def get_day_input_flex(selected_month, current_day_str="1"):
                             "text": f"{current_day_str} 日",
                             "weight": "bold",
                             "size": "xl",
-                            "align": "right",
+                            "align": "end",
                             "color": "#111111"
                         }
                     ]
@@ -397,7 +397,7 @@ def get_keypad_flex(category, current_val_str="0"):
                             "text": formatted_val,
                             "weight": "bold",
                             "size": "xl",
-                            "align": "right",
+                            "align": "end",
                             "color": "#111111"
                         }
                     ]
