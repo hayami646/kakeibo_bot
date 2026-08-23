@@ -136,7 +136,7 @@ def get_balance_menu_flex():
 
 def get_category_flex():
     """分類選択"""
-    categories = ["食費", "日用品", "外食", "交通費", "娯楽", "固定費", "特別費"]
+    categories = ["食費", "外食", "共用", "快海おこづかい", "真季おこづかい", "臨時", "キャンセル"]
     buttons = [
         {
             "type": "button",
