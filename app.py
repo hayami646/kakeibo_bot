@@ -24,7 +24,7 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 # ユーザーIDと表示名のマッピング
 USER_MAP = {
     "U7ec4e3142dbdca5e58341bac3264e8d4": "快海",
-    "U33dfd50f79bf0c4c44824ba2ab0622a8": "Maki",
+    "U33dfd50f79bf0c4c44824ba2ab0622a8": "真季",
 }
 
 # 残高確認の対象項目と対応セルのマッピング
@@ -61,6 +61,16 @@ def get_target_sheet_name():
     else:
         target_month = now.month
     return f"{target_month}月", str(now.day)
+
+def append_to_spreadsheet(day_str, amount, category, person, memo):
+    """スプレッドシートへの書き込み共通処理"""
+    sheet_name, _ = get_target_sheet_name()
+    client = get_gspread_client()
+    workbook = client.open_by_key(SPREADSHEET_KEY)
+    sheet = workbook.worksheet(sheet_name)
+    row_data = [day_str, int(amount), category, person, memo]
+    sheet.append_row(row_data)
+    return sheet_name
 
 # --- Flex Message レスポンス定義 ---
 
@@ -234,10 +244,12 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
+    # 既存セッションの取得
     session = user_sessions.get(line_user_id, {})
+    step = session.get("step")
 
     # ② 分類選択の受付
-    if user_text.startswith("分類:") and session.get("step") == "WAIT_CATEGORY":
+    if step == "WAIT_CATEGORY" and user_text.startswith("分類:"):
         category = user_text.replace("分類:", "")
         user_sessions[line_user_id] = {"step": "WAIT_AMOUNT", "category": category}
         line_bot_api.reply_message(
@@ -247,7 +259,7 @@ def handle_message(event):
         return
 
     # ③ 金額入力の受付
-    if session.get("step") == "WAIT_AMOUNT":
+    if step == "WAIT_AMOUNT":
         if user_text.isdigit():
             session["amount"] = user_text
             session["step"] = "WAIT_MEMO_OPTION"
@@ -262,85 +274,87 @@ def handle_message(event):
             )
             return
 
-    # ④ メモ「あり」を選択した際のテキスト待ち状態への遷移
-    if session.get("step") == "WAIT_MEMO_OPTION" and user_text == "メモ:あり":
-        session["step"] = "WAIT_MEMO_TEXT"
-        user_sessions[line_user_id] = session
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text="メモの内容をテキストで送信してください。")
-        )
-        return
+    # ④ メモ「あり」「なし」の選択受付
+    if step == "WAIT_MEMO_OPTION":
+        if user_text == "メモ:あり":
+            session["step"] = "WAIT_MEMO_TEXT"
+            user_sessions[line_user_id] = session
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="メモの内容をテキストで送信してください。")
+            )
+            return
+        elif user_text == "メモ:なし":
+            category = session.get("category")
+            amount = session.get("amount")
+            memo = "-"
+            _, day_str = get_target_sheet_name()
+            try:
+                sheet_name = append_to_spreadsheet(day_str, amount, category, person, memo)
+                user_sessions.pop(line_user_id, None)
+                reply_text = f"【記録完了 ({sheet_name})】\n日付: {day_str}日\n金額: {amount}円\n分類: {category}\n担当: {person}\nメモ: {memo}"
+            except Exception as e:
+                reply_text = f"⚠️ エラーが発生しました:\n{e}"
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+            return
 
-    # --- ここからスプレッドシートの接続処理 ---
-    sheet_name, day_str = get_target_sheet_name()
-    client = get_gspread_client()
-    workbook = client.open_by_key(SPREADSHEET_KEY)
-
-    try:
-        sheet = workbook.worksheet(sheet_name)
-    except Exception:
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=f"エラー: シート「{sheet_name}」が見つかりませんでした。")
-        )
-        return
-
-    # ⑤ メモ「なし」の確定＆スプレッドシート書き込み
-    if session.get("step") == "WAIT_MEMO_OPTION" and user_text == "メモ:なし":
-        category = session.get("category")
-        amount = session.get("amount")
-        memo = "-"
-        row_data = [day_str, int(amount), category, person, memo]
-        sheet.append_row(row_data)
-        user_sessions.pop(line_user_id, None)
-
-        reply_text = f"【記録完了 ({sheet_name})】\n日付: {day_str}日\n金額: {amount}円\n分類: {category}\n担当: {person}\nメモ: {memo}"
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-        return
-
-    # ⑥ メモテキスト入力の確定＆スプレッドシート書き込み（ここでテキストを受け取って保存）
-    if session.get("step") == "WAIT_MEMO_TEXT":
+    # ⑤ メモテキストの受付＆確定処理
+    if step == "WAIT_MEMO_TEXT":
         memo = user_text
         category = session.get("category")
         amount = session.get("amount")
-        row_data = [day_str, int(amount), category, person, memo]
-        sheet.append_row(row_data)
-        user_sessions.pop(line_user_id, None)
-
-        reply_text = f"【記録完了 ({sheet_name})】\n日付: {day_str}日\n金額: {amount}円\n分類: {category}\n担当: {person}\nメモ: {memo}"
+        _, day_str = get_target_sheet_name()
+        try:
+            sheet_name = append_to_spreadsheet(day_str, amount, category, person, memo)
+            user_sessions.pop(line_user_id, None)
+            reply_text = f"【記録完了 ({sheet_name})】\n日付: {day_str}日\n金額: {amount}円\n分類: {category}\n担当: {person}\nメモ: {memo}"
+        except Exception as e:
+            reply_text = f"⚠️ スプレッドシート保存エラー:\n{e}"
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         return
+
+    # --- その他の固定コマンド（取り消し・残高など） ---
 
     # 取り消し機能
     if user_text in ["取り消し", "削除", "とりけし"]:
         user_sessions.pop(line_user_id, None)
-        all_rows = sheet.get_all_values()
-        if len(all_rows) >= 4:
-            sheet.delete_rows(len(all_rows))
-            reply_text = f"🗑️ ({sheet_name}) 直前の入力データを取り消しました！"
-        else:
-            reply_text = f"⚠️ ({sheet_name}) 削除できるデータがありません。"
+        try:
+            sheet_name, _ = get_target_sheet_name()
+            client = get_gspread_client()
+            workbook = client.open_by_key(SPREADSHEET_KEY)
+            sheet = workbook.worksheet(sheet_name)
+            all_rows = sheet.get_all_values()
+            if len(all_rows) >= 4:
+                sheet.delete_rows(len(all_rows))
+                reply_text = f"🗑️ ({sheet_name}) 直前の入力データを取り消しました！"
+            else:
+                reply_text = f"⚠️ ({sheet_name}) 削除できるデータがありません。"
+        except Exception as e:
+            reply_text = f"⚠️ 削除処理でエラーが発生しました:\n{e}"
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         return
 
-    # 残高確認メニューの表示
+    # 残高確認メニュー
     if user_text in ["残高メニュー", "残高確認", "残高"]:
         user_sessions.pop(line_user_id, None)
         flex_msg = FlexSendMessage(alt_text="残高確認メニュー", contents=get_balance_menu_flex())
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    # 指定セルの残高取得処理
+    # 指定セルの残高取得
     if user_text in BALANCE_CELL_MAP:
         user_sessions.pop(line_user_id, None)
         item_name, cell_address = BALANCE_CELL_MAP[user_text]
         try:
+            sheet_name, _ = get_target_sheet_name()
+            client = get_gspread_client()
+            workbook = client.open_by_key(SPREADSHEET_KEY)
+            sheet = workbook.worksheet(sheet_name)
             val = sheet.acell(cell_address).value
             val_display = val if val is not None else "0"
             reply_text = f"📊 【{sheet_name} / {item_name}】\n残高 (セル {cell_address}): {val_display}"
         except Exception as e:
-            reply_text = f"⚠️ 残高の取得に失敗しました ({cell_address})"
+            reply_text = f"⚠️ 残高の取得に失敗しました:\n{e}"
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         return
 
@@ -365,13 +379,17 @@ def handle_message(event):
                     memo = " ".join(remains)
                 break
     else:
+        # 該当しないメッセージはメインメニューを返す
         flex_msg = FlexSendMessage(alt_text="家計簿メニュー", contents=get_main_menu_flex())
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    row_data = [day_str, int(amount), category, person, memo]
-    sheet.append_row(row_data)
-    reply_text = f"【記録完了 ({sheet_name})】\n日付: {day_str}日\n金額: {amount}円\n分類: {category}\n担当: {person}\nメモ: {memo}"
+    try:
+        sheet_name, day_str = get_target_sheet_name()
+        sheet_name = append_to_spreadsheet(day_str, amount, category, person, memo)
+        reply_text = f"【記録完了 ({sheet_name})】\n日付: {day_str}日\n金額: {amount}円\n分類: {category}\n担当: {person}\nメモ: {memo}"
+    except Exception as e:
+        reply_text = f"⚠️ エラーが発生しました:\n{e}"
     line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
 
 if __name__ == "__main__":
