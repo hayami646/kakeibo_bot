@@ -204,7 +204,7 @@ def callback():
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
-user_text = event.message.text.strip()
+    user_text = event.message.text.strip()
     line_user_id = event.source.user_id
 
     # ユーザー判定
