@@ -38,6 +38,8 @@ BALANCE_CELL_LIST = [
 ]
 
 user_sessions = {}
+# 直前に書き込みを行ったシート名を記録するグローバル変数
+last_written_sheet = None
 
 def get_gspread_client():
     scope = [
@@ -77,12 +79,16 @@ def get_target_sheet_name(specified_month=None, specified_day=None):
 
 def append_to_spreadsheet(month_str, day_str, amount, category, person, memo):
     """スプレッドシートへの書き込み共通処理"""
+    global last_written_sheet
     sheet_name, _ = get_target_sheet_name(month_str, day_str)
     client = get_gspread_client()
     workbook = client.open_by_key(SPREADSHEET_KEY)
     sheet = workbook.worksheet(sheet_name)
     row_data = [day_str, int(amount), category, person, memo]
     sheet.append_row(row_data)
+    
+    # 削除時に直前の入力シートを正しく参照できるよう記録
+    last_written_sheet = sheet_name
     return sheet_name
 
 # --- Flex Message デザイン定義 ---
@@ -352,125 +358,6 @@ def get_income_flex():
         }
     }
 
-def get_keypad_flex(category, current_val_str="0"):
-    """金額入力用テンキーFlex Message"""
-    try:
-        formatted_val = f"{int(current_val_str):,} 円"
-    except ValueError:
-        formatted_val = "0 円"
-
-    def make_btn(label, action_text, style="secondary", color=None):
-        btn = {
-            "type": "button",
-            "style": style,
-            "height": "sm",
-            "action": {"type": "message", "label": label, "text": action_text}
-        }
-        if color:
-            btn["color"] = color
-        return btn
-
-    return {
-        "type": "bubble",
-        "body": {
-            "type": "box",
-            "layout": "vertical",
-            "spacing": "md",
-            "contents": [
-                {
-                    "type": "text",
-                    "text": f"【{category}】の金額を入力",
-                    "weight": "bold",
-                    "size": "md",
-                    "align": "center",
-                    "color": "#555555"
-                },
-                {
-                    "type": "box",
-                    "layout": "vertical",
-                    "backgroundColor": "#F0F0F0",
-                    "cornerRadius": "md",
-                    "paddingAll": "md",
-                    "contents": [
-                        {
-                            "type": "text",
-                            "text": formatted_val,
-                            "weight": "bold",
-                            "size": "xl",
-                            "align": "end",
-                            "color": "#111111"
-                        }
-                    ]
-                },
-                {
-                    "type": "box",
-                    "layout": "vertical",
-                    "spacing": "xs",
-                    "contents": [
-                        {
-                            "type": "box",
-                            "layout": "horizontal",
-                            "spacing": "xs",
-                            "contents": [
-                                make_btn("7", "電卓:7"),
-                                make_btn("8", "電卓:8"),
-                                make_btn("9", "電卓:9")
-                            ]
-                        },
-                        {
-                            "type": "box",
-                            "layout": "horizontal",
-                            "spacing": "xs",
-                            "contents": [
-                                make_btn("4", "電卓:4"),
-                                make_btn("5", "電卓:5"),
-                                make_btn("6", "電卓:6")
-                            ]
-                        },
-                        {
-                            "type": "box",
-                            "layout": "horizontal",
-                            "spacing": "xs",
-                            "contents": [
-                                make_btn("1", "電卓:1"),
-                                make_btn("2", "電卓:2"),
-                                make_btn("3", "電卓:3")
-                            ]
-                        },
-                        {
-                            "type": "box",
-                            "layout": "horizontal",
-                            "spacing": "xs",
-                            "contents": [
-                                make_btn("0", "電卓:0"),
-                                make_btn("00", "電卓:00"),
-                                make_btn("⌫", "電卓:BS")
-                            ]
-                        },
-                        {
-                            "type": "box",
-                            "layout": "horizontal",
-                            "spacing": "xs",
-                            "margin": "xs",
-                            "contents": [
-                                make_btn("C クリア", "電卓:CLR"),
-                                make_btn("キャンセル", "キャンセル")
-                            ]
-                        },
-                        {
-                            "type": "box",
-                            "layout": "vertical",
-                            "margin": "sm",
-                            "contents": [
-                                make_btn("✅ この金額で確定", "電卓:ENT", style="primary", color="#1DB446")
-                            ]
-                        }
-                    ]
-                }
-            ]
-        }
-    }
-
 def get_memo_option_flex():
     return {
         "type": "bubble",
@@ -515,6 +402,7 @@ def callback():
 
 @handler.add(MessageEvent, message=TextMessage)
 def handle_message(event):
+    global last_written_sheet
     user_text = event.message.text.strip()
     line_user_id = event.source.user_id
 
@@ -630,10 +518,9 @@ def handle_message(event):
         
         session["step"] = "WAIT_AMOUNT"
         session["category"] = category
-        session["amount_str"] = "0"
         user_sessions[line_user_id] = session
-        flex_msg = FlexSendMessage(alt_text="金額入力", contents=get_keypad_flex(category, "0"))
-        line_bot_api.reply_message(event.reply_token, flex_msg)
+        display_label = f"{session.get('month')}月分 {category}" if session.get('month') else category
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"【{display_label}】の金額（半角数字）を送信してください。"))
         return
 
     # ②-2 固定費項目選択の受付
@@ -655,12 +542,10 @@ def handle_message(event):
         session["month"] = selected_month
         session["day"] = "1"  # 固定費はデフォルトで1日に記録
         session["step"] = "WAIT_AMOUNT"
-        session["amount_str"] = "0"
         user_sessions[line_user_id] = session
         
         category = session.get("category", "")
-        flex_msg = FlexSendMessage(alt_text="金額入力", contents=get_keypad_flex(f"{selected_month}月分 {category}", "0"))
-        line_bot_api.reply_message(event.reply_token, flex_msg)
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"【{selected_month}月分 {category}】の金額（半角数字）を送信してください。"))
         return
 
     # ②-3 収入項目選択の受付
@@ -668,61 +553,35 @@ def handle_message(event):
         item = user_text.replace("収入項目:", "")
         session["step"] = "WAIT_AMOUNT"
         session["category"] = item
-        session["amount_str"] = "0"
         user_sessions[line_user_id] = session
-        flex_msg = FlexSendMessage(alt_text="金額入力", contents=get_keypad_flex(item, "0"))
-        line_bot_api.reply_message(event.reply_token, flex_msg)
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"【{item}】の金額（半角数字）を送信してください。"))
         return
 
-    # ③ 金額入力（電卓）の受付
-    if step == "WAIT_AMOUNT" and user_text.startswith("電卓:"):
-        cmd = user_text.replace("電卓:", "")
-        curr_val = session.get("amount_str", "0")
+    # ③ 金額入力（直接テキスト送信）の受付
+    if step == "WAIT_AMOUNT":
         category = session.get("category", "")
-        month = session.get("month")
-
-        display_label = f"{month}月分 {category}" if month else category
-
-        if cmd in [str(i) for i in range(10)] or cmd == "00":
-            if curr_val == "0":
-                if cmd != "00":
-                    curr_val = cmd
-            else:
-                if len(curr_val) < 8:
-                    curr_val += cmd
-        elif cmd == "BS":
-            curr_val = curr_val[:-1]
-            if not curr_val:
-                curr_val = "0"
-        elif cmd == "CLR":
-            curr_val = "0"
-        elif cmd == "ENT":
-            if int(curr_val) == 0:
-                line_bot_api.reply_message(
-                    event.reply_token,
-                    TextSendMessage(text="金額が0円です。数字を入力してください。")
-                )
-                return
-            
-            session["amount"] = curr_val
-            if category == "収入（その他）":
-                session["step"] = "WAIT_MEMO_TEXT"
-                user_sessions[line_user_id] = session
-                line_bot_api.reply_message(
-                    event.reply_token,
-                    TextSendMessage(text="収入の内容（メモ）をテキストで入力してください。\n（例：宝くじ、メルカリ売上）")
-                )
-                return
-
-            session["step"] = "WAIT_MEMO_OPTION"
-            user_sessions[line_user_id] = session
-            flex_msg = FlexSendMessage(alt_text="メモ選択", contents=get_memo_option_flex())
-            line_bot_api.reply_message(event.reply_token, flex_msg)
+        # 全角数字を半角に変換するなどの処理
+        val_str = user_text.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+        if not val_str.isdigit() or int(val_str) == 0:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="金額は正の半角数字（例: 1200）で入力してください。")
+            )
             return
 
-        session["amount_str"] = curr_val
+        session["amount"] = val_str
+        if category == "収入（その他）":
+            session["step"] = "WAIT_MEMO_TEXT"
+            user_sessions[line_user_id] = session
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="収入の内容（メモ）をテキストで入力してください。\n（例：宝くじ、メルカリ売上）")
+            )
+            return
+
+        session["step"] = "WAIT_MEMO_OPTION"
         user_sessions[line_user_id] = session
-        flex_msg = FlexSendMessage(alt_text="金額入力", contents=get_keypad_flex(display_label, curr_val))
+        flex_msg = FlexSendMessage(alt_text="メモ選択", contents=get_memo_option_flex())
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
@@ -773,19 +632,41 @@ def handle_message(event):
 
     # --- その他の固定コマンド（取り消し・残高など） ---
 
+    # 直前の入力削除処理
     if user_text in ["取り消し", "削除", "とりけし"]:
         user_sessions.pop(line_user_id, None)
         try:
-            sheet_name, _ = get_target_sheet_name()
+            # 直前に書き込んだシートがあれば優先、無ければ現在の締め日ロジックに基づく月シートを参照
+            target_sheet = last_written_sheet if last_written_sheet else get_target_sheet_name()[0]
+            
             client = get_gspread_client()
             workbook = client.open_by_key(SPREADSHEET_KEY)
-            sheet = workbook.worksheet(sheet_name)
+            sheet = workbook.worksheet(target_sheet)
             all_rows = sheet.get_all_values()
+            
             if len(all_rows) >= 4:
+                # 削除対象の最終行データを取得
+                deleted_row = all_rows[-1]
+                del_day = deleted_row[0] if len(deleted_row) > 0 else "-"
+                del_amount = deleted_row[1] if len(deleted_row) > 1 else "-"
+                del_category = deleted_row[2] if len(deleted_row) > 2 else "-"
+                del_person = deleted_row[3] if len(deleted_row) > 3 else "-"
+                del_memo = deleted_row[4] if len(deleted_row) > 4 else "-"
+                
+                # 最終行を削除
                 sheet.delete_rows(len(all_rows))
-                reply_text = f"🗑️ ({sheet_name}) 直前の入力データを取り消しました！"
+                
+                reply_text = (
+                    f"🗑️ 【{target_sheet}】直前の入力データを削除しました！\n"
+                    f"--------------------\n"
+                    f"・日付: {del_day}日\n"
+                    f"・金額: {del_amount}円\n"
+                    f"・分類: {del_category}\n"
+                    f"・担当: {del_person}\n"
+                    f"・メモ: {del_memo}"
+                )
             else:
-                reply_text = f"⚠️ ({sheet_name}) 削除できるデータがありません。"
+                reply_text = f"⚠️ ({target_sheet}) 削除できるデータがありません。"
         except Exception as e:
             reply_text = f"⚠️ 削除処理でエラーが発生しました:\n{e}"
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
