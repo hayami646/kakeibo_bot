@@ -24,7 +24,7 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 # ユーザーIDと表示名のマッピング
 USER_MAP = {
     "U7ec4e3142dbdca5e58341bac3264e8d4": "快海",
-    "YOUR_LINE_USER_ID_2": "Maki",
+    "U33dfd50f70bf0c4c44824ba2ab0622a8": "真季",
 }
 
 # 残高確認の対象項目と対応セルのマッピング
@@ -84,17 +84,17 @@ def get_main_menu_flex():
                             "type": "button",
                             "style": "primary",
                             "color": "#1DB446",
-                            "action": {"type": "message", "label": "📝 データを入力する", "text": "操作:入力開始"}
+                            "action": {"type": "message", "label": "📝 データを入力する", "text": "入力"}
                         },
                         {
                             "type": "button",
                             "style": "secondary",
-                            "action": {"type": "message", "label": "🗑️ １つ前を削除", "text": "取り消し"}
+                            "action": {"type": "message", "label": "🗑️ １つ前を削除", "text": "削除"}
                         },
                         {
                             "type": "button",
                             "style": "secondary",
-                            "action": {"type": "message", "label": "📊 今月の予算残高を確認", "text": "残高メニュー"}
+                            "action": {"type": "message", "label": "📊 今月の予算残高を確認", "text": "残高"}
                         }
                     ]
                 }
@@ -143,7 +143,7 @@ def get_category_flex():
             "style": "secondary",
             "margin": "xs",
             "height": "sm",
-            "action": {"type": "message", "label": cat, "text": f"分類:{cat}"}
+            "action": {"type": "message", "label": cat, "text": f"分類:{cat}" if cat != "キャンセル" else "キャンセル"}
         } for cat in categories
     ]
     return {
@@ -227,14 +227,52 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    # ★★★ ここに移動！(スプレッドシート読み込みの前に処理する) ★★★
+    # ① 入力開始（分類選択メニューの表示）
     if user_text in ["操作:入力開始", "入力"]:
         user_sessions[line_user_id] = {"step": "WAIT_CATEGORY"}
         flex_msg = FlexSendMessage(alt_text="分類選択", contents=get_category_flex())
         line_bot_api.reply_message(event.reply_token, flex_msg)
         return
 
-    # --- ここから下でスプレッドシートの読み込みを開始 ---
+    session = user_sessions.get(line_user_id, {})
+
+    # ② 分類選択の受付
+    if user_text.startswith("分類:") and session.get("step") == "WAIT_CATEGORY":
+        category = user_text.replace("分類:", "")
+        user_sessions[line_user_id] = {"step": "WAIT_AMOUNT", "category": category}
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text=f"【{category}】ですね！\n金額を半角数字で入力してください（例: 1500）")
+        )
+        return
+
+    # ③ 金額入力の受付
+    if session.get("step") == "WAIT_AMOUNT":
+        if user_text.isdigit():
+            session["amount"] = user_text
+            session["step"] = "WAIT_MEMO_OPTION"
+            user_sessions[line_user_id] = session
+            flex_msg = FlexSendMessage(alt_text="メモ選択", contents=get_memo_option_flex())
+            line_bot_api.reply_message(event.reply_token, flex_msg)
+            return
+        else:
+            line_bot_api.reply_message(
+                event.reply_token,
+                TextSendMessage(text="金額は半角数字のみで入力してください（例: 1500）")
+            )
+            return
+
+    # ④ メモ「あり」を選択した際のテキスト待ち状態への遷移
+    if session.get("step") == "WAIT_MEMO_OPTION" and user_text == "メモ:あり":
+        session["step"] = "WAIT_MEMO_TEXT"
+        user_sessions[line_user_id] = session
+        line_bot_api.reply_message(
+            event.reply_token,
+            TextSendMessage(text="メモの内容をテキストで送信してください。")
+        )
+        return
+
+    # --- ここからスプレッドシートの接続・データ書き込み処理 ---
     sheet_name, day_str = get_target_sheet_name()
     client = get_gspread_client()
     workbook = client.open_by_key(SPREADSHEET_KEY)
@@ -246,6 +284,32 @@ def handle_message(event):
             event.reply_token,
             TextSendMessage(text=f"エラー: シート「{sheet_name}」が見つかりませんでした。")
         )
+        return
+
+    # ⑤ メモ「なし」の確定＆スプレッドシート書き込み
+    if session.get("step") == "WAIT_MEMO_OPTION" and user_text == "メモ:なし":
+        category = session.get("category")
+        amount = session.get("amount")
+        memo = "-"
+        row_data = [day_str, int(amount), category, person, memo]
+        sheet.append_row(row_data)
+        user_sessions.pop(line_user_id, None)
+
+        reply_text = f"【記録完了 ({sheet_name})】\n日付: {day_str}日\n金額: {amount}円\n分類: {category}\n担当: {person}\nメモ: {memo}"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
+        return
+
+    # ⑥ メモテキスト入力の確定＆スプレッドシート書き込み
+    if session.get("step") == "WAIT_MEMO_TEXT":
+        memo = user_text
+        category = session.get("category")
+        amount = session.get("amount")
+        row_data = [day_str, int(amount), category, person, memo]
+        sheet.append_row(row_data)
+        user_sessions.pop(line_user_id, None)
+
+        reply_text = f"【記録完了 ({sheet_name})】\n日付: {day_str}日\n金額: {amount}円\n分類: {category}\n担当: {person}\nメモ: {memo}"
+        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         return
 
     # 取り消し機能
@@ -280,72 +344,7 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         return
 
-    # --- 対話型入力フロー（残り） ---
-
-    session = user_sessions.get(line_user_id, {})
-
-    if user_text.startswith("分類:") and session.get("step") == "WAIT_CATEGORY":
-        category = user_text.replace("分類:", "")
-        user_sessions[line_user_id] = {"step": "WAIT_AMOUNT", "category": category}
-        line_bot_api.reply_message(
-            event.reply_token,
-            TextSendMessage(text=f"【{category}】ですね！\n金額を半角数字で入力してください（例: 1500）")
-        )
-        return
-
-    if session.get("step") == "WAIT_AMOUNT":
-        if user_text.isdigit():
-            session["amount"] = user_text
-            session["step"] = "WAIT_MEMO_OPTION"
-            user_sessions[line_user_id] = session
-            flex_msg = FlexSendMessage(alt_text="メモ選択", contents=get_memo_option_flex())
-            line_bot_api.reply_message(event.reply_token, flex_msg)
-            return
-        else:
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage(text="金額は半角数字のみで入力してください（例: 1500）")
-            )
-            return
-
-    if session.get("step") == "WAIT_MEMO_OPTION":
-        if user_text == "メモ:なし":
-            memo = "-"
-        elif user_text == "メモ:あり":
-            session["step"] = "WAIT_MEMO_TEXT"
-            user_sessions[line_user_id] = session
-            line_bot_api.reply_message(
-                event.reply_token,
-                TextSendMessage(text="メモの内容をテキストで送信してください。")
-            )
-            return
-        else:
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text="ボタンを選択してください。"))
-            return
-
-        category = session.get("category")
-        amount = session.get("amount")
-        row_data = [day_str, int(amount), category, person, memo]
-        sheet.append_row(row_data)
-        user_sessions.pop(line_user_id, None)
-
-        reply_text = f"【記録完了 ({sheet_name})】\n日付: {day_str}日\n金額: {amount}円\n分類: {category}\n担当: {person}\nメモ: {memo}"
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-        return
-
-    if session.get("step") == "WAIT_MEMO_TEXT":
-        memo = user_text
-        category = session.get("category")
-        amount = session.get("amount")
-        row_data = [day_str, int(amount), category, person, memo]
-        sheet.append_row(row_data)
-        user_sessions.pop(line_user_id, None)
-
-        reply_text = f"【記録完了 ({sheet_name})】\n日付: {day_str}日\n金額: {amount}円\n分類: {category}\n担当: {person}\nメモ: {memo}"
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
-        return
-
-    # バックアップ用直接入力
+    # バックアップ用直接入力（例: 「1500」や「食費 1500」）
     parts = user_text.split()
     category = "食費"
     amount = ""
