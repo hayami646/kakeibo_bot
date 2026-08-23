@@ -24,18 +24,18 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 # ユーザーIDと表示名のマッピング
 USER_MAP = {
     "U7ec4e3142dbdca5e58341bac3264e8d4": "快海",
-    "U33dfd50f79bf0c4c44824ba2ab0622a8": "Maki",
+    "U33dfd50f79bf0c4c44824ba2ab0622a8": "真季",
 }
 
-# 残高確認の対象項目と対応セルのマッピング
-BALANCE_CELL_MAP = {
-    "残高:食費": ("食費", "I41"),
-    "残高:外食": ("外食", "K41"),
-    "残高:共用": ("共用", "M41"),
-    "残高:快海": ("快海おこづかい", "O41"),
-    "残高:真季": ("真季おこづかい", "Q41"),
-    "残高:全合計": ("全合計", "S43")
-}
+# 残高確認の対象項目と対応セルのマッピング（一括表示用）
+BALANCE_CELL_LIST = [
+    ("食費", "I41"),
+    ("外食", "K41"),
+    ("共用", "M41"),
+    ("快海おこづかい", "O41"),
+    ("真季おこづかい", "Q41"),
+    ("全合計", "S43")
+]
 
 user_sessions = {}
 
@@ -56,7 +56,7 @@ def get_target_sheet_name(specified_month=None, specified_day=None):
     """
     シート名と日付文字列を取得。
     指定の月があればその月シートを使用。
-    月が未指定（通常入力）の場合は25日締めロジックで判定。
+    月が未指定の場合は25日締めロジックで自動判定。
     """
     JST = timezone(timedelta(hours=+9))
     now = datetime.now(JST)
@@ -122,7 +122,7 @@ def get_main_menu_flex():
                         {
                             "type": "button",
                             "style": "secondary",
-                            "action": {"type": "message", "label": "📊 今月の予算残高を確認", "text": "残高"}
+                            "action": {"type": "message", "label": "📊 予算残高を確認", "text": "残高"}
                         }
                     ]
                 }
@@ -276,37 +276,6 @@ def get_day_input_flex(selected_month, current_day_str="1"):
                         }
                     ]
                 }
-            ]
-        }
-    }
-
-def get_balance_menu_flex():
-    items = [
-        ("🍔 食費", "残高:食費"),
-        ("🍺 外食", "残高:外食"),
-        ("🏠 共用", "残高:共用"),
-        ("👨 快海おこづかい", "残高:快海"),
-        ("👩 真季おこづかい", "残高:真季"),
-        ("💰 全合計", "残高:全合計")
-    ]
-    buttons = [
-        {
-            "type": "button",
-            "style": "secondary",
-            "margin": "xs",
-            "height": "sm",
-            "action": {"type": "message", "label": label, "text": cmd}
-        } for label, cmd in items
-    ]
-    return {
-        "type": "bubble",
-        "body": {
-            "type": "box",
-            "layout": "vertical",
-            "contents": [
-                {"type": "text", "text": "確認したい項目を選択してください", "weight": "bold", "size": "md", "align": "center"},
-                {"type": "separator", "margin": "md"},
-                {"type": "box", "layout": "vertical", "margin": "md", "spacing": "xs", "contents": buttons}
             ]
         }
     }
@@ -822,25 +791,28 @@ def handle_message(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         return
 
+    # 残高確認（ボタン1回で現在の対象月シートの全項目を即時表示）
     if user_text in ["残高メニュー", "残高確認", "残高"]:
         user_sessions.pop(line_user_id, None)
-        flex_msg = FlexSendMessage(alt_text="残高確認メニュー", contents=get_balance_menu_flex())
-        line_bot_api.reply_message(event.reply_token, flex_msg)
-        return
-
-    if user_text in BALANCE_CELL_MAP:
-        user_sessions.pop(line_user_id, None)
-        item_name, cell_address = BALANCE_CELL_MAP[user_text]
+        sheet_name, _ = get_target_sheet_name()  # 25日締めロジックに基づき当月のシート名を取得
+        
         try:
-            sheet_name, _ = get_target_sheet_name()
             client = get_gspread_client()
             workbook = client.open_by_key(SPREADSHEET_KEY)
             sheet = workbook.worksheet(sheet_name)
-            val = sheet.acell(cell_address).value
-            val_display = val if val is not None else "0"
-            reply_text = f"📊 【{sheet_name} / {item_name}】\n残高 (セル {cell_address}): {val_display}"
+            
+            # 各セルの値を順番に取得
+            results = []
+            for item_name, cell_addr in BALANCE_CELL_LIST:
+                val = sheet.acell(cell_addr).value
+                val_display = val if val is not None else "0"
+                results.append(f"・{item_name}: {val_display}")
+            
+            lines = "\n".join(results)
+            reply_text = f"📊 【{sheet_name} の予算残高一覧】\n--------------------\n{lines}"
         except Exception as e:
-            reply_text = f"⚠️ 残高の取得に失敗しました:\n{e}"
+            reply_text = f"⚠️ 残高の取得に失敗しました ({sheet_name}):\n{e}"
+            
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply_text))
         return
 
