@@ -276,7 +276,7 @@ def handle_message(event):
 
     session = user_sessions.get(line_user_id, {})
 
-    if user_text == "操作:入力開始":
+    if user_text in ["操作:入力開始", "入力"]:
         user_sessions[line_user_id] = {"step": "WAIT_CATEGORY"}
         flex_msg = FlexSendMessage(alt_text="分類選択", contents=get_category_flex())
         line_bot_api.reply_message(event.reply_token, flex_msg)
