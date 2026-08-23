@@ -23,7 +23,7 @@ handler = WebhookHandler(LINE_CHANNEL_SECRET)
 
 # ユーザーIDと表示名のマッピング
 USER_MAP = {
-    "buturibaka": "快海",
+    "U7ec4e3142dbdca5e58341bac3264e8d4": "快海",
     "YOUR_LINE_USER_ID_2": "Maki",
 }
 
