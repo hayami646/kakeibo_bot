@@ -77,11 +77,52 @@ def append_to_spreadsheet(month_str, day_str, amount, category, person, memo):
     client = get_gspread_client()
     workbook = client.open_by_key(SPREADSHEET_KEY)
     sheet = workbook.worksheet(sheet_name)
-    row_data = [day_str, int(amount), category, person, memo]
-    sheet.append_row(row_data)
+    
+    col_a_values = sheet.col_values(1)  # A列の値をすべて取得
+    
+    # 目印とみなす文字リスト（前後スペース無視）
+    END_MARKERS = ["*", "以下余白", "END", "---", "合計"]
+    
+    target_row = None
+    
+    # 上から順にスキャンして目印を探す
+    for idx, val in enumerate(col_a_values):
+        # .strip() で前後の半角・全角スペースを除去
+        val_str = str(val).replace('　', ' ').strip()
+        
+        if val_str in END_MARKERS:
+            # 目印のある行より上の中で、本当にデータが入っている最後の行を探す
+            last_data_idx = -1
+            for upper_idx in range(idx - 1, -1, -1):
+                upper_val = str(col_a_values[upper_idx]).replace('　', ' ').strip()
+                # 空白以外の文字が入っている場合のみデータとみなす
+                if upper_val != "":
+                    last_data_idx = upper_idx
+                    break
+            
+            # データが入っている行の「すぐ下」を指定（1-indexed補正で +2）
+            target_row = last_data_idx + 2
+            break
+            
+    # もしシート内に目印が見つからなかった場合のフォールバック処理
+    if target_row is None:
+        last_data_idx = -1
+        for idx in range(len(col_a_values) - 1, -1, -1):
+            val_clean = str(col_a_values[idx]).replace('　', ' ').strip()
+            if val_clean != "":
+                last_data_idx = idx
+                break
+        target_row = last_data_idx + 2
+
+    # 指定したピンポイントの行（A~E列）に書き込み
+    cell_range = f"A{target_row}:E{target_row}"
+    row_data = [[day_str, int(amount), category, person, memo]]
+    
+    sheet.update(cell_range, row_data)
     
     last_written_sheet = sheet_name
     return sheet_name
+
 
 # --- Flex Message デザイン定義 ---
 
