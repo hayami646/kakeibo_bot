@@ -823,7 +823,7 @@ def handle_message(event):
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"⚠️ エラーが発生しました:\n{e}"))
         return
 
-    # 削除の「はい」を押したときの実行処理
+        # 削除の「はい」を押したときの実行処理（行ごとではなく A〜E列のデータをクリアする仕様）
     if user_text.startswith("実行削除:"):
         try:
             _, sheet_name, row_num_str = user_text.split(":")
@@ -833,11 +833,17 @@ def handle_message(event):
             workbook = client.open_by_key(SPREADSHEET_KEY)
             sheet = workbook.worksheet(sheet_name)
             
-            sheet.delete_rows(row_num)
-            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"🗑️ 【{sheet_name}】の指定データを削除しました！"))
+            # A〜E列のセルを空文字（""）で上書きしてクリアする
+            cell_range = f"A{row_num}:E{row_num}"
+            empty_data = [["", "", "", "", ""]]
+            sheet.update(cell_range, empty_data)
+            
+            line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"🗑️ 【{sheet_name}】の指定データをクリアしました！"))
         except Exception as e:
             line_bot_api.reply_message(event.reply_token, TextSendMessage(text=f"⚠️ 削除に失敗しました:\n{e}"))
         return
+
+    
 
     # 残高確認
     if user_text in ["残高メニュー", "残高確認", "残高"]:
