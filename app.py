@@ -13,6 +13,11 @@ from datetime import datetime, timezone, timedelta
 
 app = Flask(__name__)
 
+@app.route("/", methods=["GET"])
+def health_check():
+    return "OK", 200
+
+
 # LINE API & スプレッドシート設定
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
